@@ -1,0 +1,185 @@
+---
+title: "Assignment 1 - Data processing and normalization"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+if (!requireNamespace("GEOmetadb", quietly = TRUE))
+    BiocManager::install("GEOmetadb")
+if (!requireNamespace("Biobase", quietly = TRUE))
+    BiocManager::install("Biobase")
+if(!requireNamespace("DBI", quietly = TRUE))
+  BiocManager::install("DBI")
+if(!requireNamespace("GEOquery", quietly = TRUE))
+  BiocManager::install("GEOquery")
+if(!requireNamespace("RSQLite", quietly = TRUE))
+  BiocManager::install("RSQLite")
+if(!requireNamespace("oligo", quietly = TRUE))
+  BiocManager::install("oligo")
+if(!requireNamespace("pd.hugene.1.0.st.v1", quietly = TRUE))
+  BiocManager::install("pd.hugene.1.0.st.v1")
+if(!requireNamespace("affycoretools", quietly = TRUE))
+  BiocManager::install("affycoretools")
+
+```
+
+## What are the control and test conditions of the dataset?
+The controls are samples taken from untreated patients, whereas the test conditions
+are samples from patients treated with intravenous immune globulin (IVIG) (given on days 0 and 30) and rituximab (given on day 15).
+
+## Why is the dataset of interest to you?
+This dataset is of interest to me because I have a chronic kidney disease.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+if(!dir.exists("GSE31729")){
+  sfiles = GEOquery::getGEOSuppFiles('GSE31729')
+  fnames = rownames(sfiles)
+  if(!dir.exists("raw_data"))
+    untar(fnames[1], exdir="raw_data")
+} else {
+  sfiles = list.files("GSE31729")
+  if(!dir.exists("raw_data"))
+    untar(sfiles[3], "raw_data")
+}
+
+# list all the files here (CEL files)
+celfiles <- list.files("raw_data")
+
+# read the files into a variable
+affyRaw <- oligo::read.celfiles(paste0("raw_data/", celfiles))
+
+gse <- GEOquery::getGEO("GSE31729", GSEMatrix = FALSE)
+
+```
+
+
+We got the data, but the sample names are very long and hard to use, so we modify them, and add a "group" variable to keep track of the control vs treatment samples.
+```{r message=FALSE, warning=FALSE}
+filename <- Biobase::sampleNames(affyRaw)
+pData(affyRaw)$filename <- filename
+sampleNames <- sub("_.*", "", filename)
+sampleNames(affyRaw) <- sampleNames
+sampleNames(affyRaw) <- unlist(lapply(sampleNames, FUN = function(x){
+  smpl <- GEOquery::Meta(GEOquery::getGEO(x))$title
+  smpl <- gsub("patient ", "", smpl)
+  smpl <- gsub("paitent ", "", smpl)
+  smpl <- gsub("after treatment", "at", smpl)
+  smpl <- gsub("before treatment", "bt", smpl)
+  smpl <- gsub("untreated control", "uc", smpl)
+  smpl <- gsub("(non-paired analysis)", "np", smpl)
+  smpl <- gsub("(paired analysis)", "p", smpl)
+  return(smpl)
+}))
+
+# add groups
+pData(affyRaw)$group <- ifelse(grepl("at", sampleNames(affyRaw)),
+                               "After Treatment", "Control")
+pData(affyRaw)$group <- ifelse(grepl("bt", sampleNames(affyRaw)),
+                               "Before Treatment", pData(affyRaw)$group)
+
+```
+
+We first get the MDS plot of our data to find outliers.
+```{r message=FALSE, warning=FALSE}
+
+mds <- cmdscale(dist(t(exprs(affyRaw))),eig=TRUE)
+plot(mds$points,col=as.numeric(as.factor(pData(affyRaw)$group)),pch=19,main="MDS")
+text(mds$points, labels=sampleNames(affyRaw), cex=0.6)
+```
+
+We can see that sample 139 untreated control is an outlier in the dataset. We'll remove it. There is no easy way to remove a sample from a GeneFeatureSet object that I could find, so we'll just have to re-load the data, excluding the file. 
+
+We remove the sample first.
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+outlierFile <- pData(affyRaw)$filename[rownames(pData(affyRaw)) == "139 uc (np)"]
+celfiles <- celfiles[!grepl(outlierFile, celfiles)]
+
+affyRaw <- oligo::read.celfiles(paste0("raw_data/", celfiles))
+
+gse <- GEOquery::getGEO("GSE31729", GSEMatrix = FALSE)
+
+```
+
+Now we reload the data.
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+# read the files into a variable
+affyRaw <- oligo::read.celfiles(paste0("raw_data/", celfiles))
+
+gse <- GEOquery::getGEO("GSE31729", GSEMatrix = FALSE)
+```
+
+We have to tag everything again.
+```{r message=FALSE, warning=FALSE}
+filename <- Biobase::sampleNames(affyRaw)
+pData(affyRaw)$filename <- filename
+sampleNames <- sub("_.*", "", filename)
+sampleNames(affyRaw) <- sampleNames
+sampleNames(affyRaw) <- unlist(lapply(sampleNames, FUN = function(x){
+  smpl <- GEOquery::Meta(GEOquery::getGEO(x))$title
+  smpl <- gsub("patient ", "", smpl)
+  smpl <- gsub("paitent ", "", smpl)
+  smpl <- gsub("after treatment", "at", smpl)
+  smpl <- gsub("before treatment", "bt", smpl)
+  smpl <- gsub("untreated control", "uc", smpl)
+  smpl <- gsub("(non-paired analysis)", "np", smpl)
+  smpl <- gsub("(paired analysis)", "p", smpl)
+  return(smpl)
+}))
+
+# add groups
+pData(affyRaw)$group <- ifelse(grepl("at", sampleNames(affyRaw)),
+                               "After Treatment", "Control")
+pData(affyRaw)$group <- ifelse(grepl("bt", sampleNames(affyRaw)),
+                               "Before Treatment", pData(affyRaw)$group)
+
+```
+
+Now we can see a box plot of our data. 
+```{r message=FALSE, warning=FALSE}
+boxplot(affyRaw, target="core", which="pm", col="red", names=sampleNames(affyRaw), main="Raw Sample Expression", las=3)
+```
+
+We can see the distribution has some samples that are slightly off the average. We'll normalize it and plot it again.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+
+affyNorm <- rma(affyRaw)
+
+boxplot(affyNorm, target="core", which="pm", col="red", names=sampleNames(affyNorm), main="Normalized Sample Expression" , las=3)
+```
+
+The data looks much cleaner now. We can compare the histograms.
+```{r message=FALSE, warning=FALSE}
+
+hist(affyRaw, xlim=c(0,16), target="core", main="Raw Data Density", lwd=2)
+
+hist(affyNorm, xlim=c(0,16), main="Normalized Data Density", lwd=2)
+
+```
+
+We still only have probeset IDs in our dataset, but fortunately there is an annotation package for this platform, which we can get.
+```{r message=FALSE, warning=FALSE}
+es <- affycoretools::annotateEset(affyNorm, pd.hugene.1.0.st.v1)
+f <- fData(es)
+```
+
+
+## Were there expression values that were not unique for specific genes? How did you handle these?
+Yes, as the experiment was performed with microarrays, there are several probesets that map to the same gene. This is expected, and although averaging or adding them may be done, following the suggestion of [Obi Griffith in BioStars](https://www.biostars.org/p/51756/), we will leave them until later, in order to actually see the different probes during differential expression analysis, since it's possible that we lose some significant data by trying to correct them at this stage (e.g. averaging could end up showing the gene as not differentially expressed, when in reality one of the probes is and the other is not).
+
+## Were there expression values that could not be mapped to current HUGO symbols?
+Yes, a total of `r dim(f[f$SYMBOL=="<NA>", ])[1]` probe IDs could not be mapped. From my research online this is common, and many of these are expected to be control probes. However, some of them may have been outdated annotations - but they are difficult to distinguish without going through the whole list, so I left them in place.
+
+## How many outliers were removed?
+One sample was removed as an outlier since it was very far off in the MDS plot. 
+
+## How did you handle replicates?
+There was only 1 replicate for each condition per sample.
+
+## What is the final coverage of your dataset?
+Originally we had `r dim(f)[1]` probes, but after removing unmappable ones we have `r dim(f[which(f$SYMBOL != "<NA"), ])[1]`.
