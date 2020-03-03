@@ -1,0 +1,223 @@
+---
+title: "Assignment 2 - Differential Gene expression and Preliminary ORA"
+author: Bruno Pereira
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 4 
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+if (!requireNamespace("Biobase", quietly = TRUE))
+    BiocManager::install("Biobase")
+if(!requireNamespace("limma", quietly = TRUE))
+  BiocManager::install("limma")
+if(!requireNamespace("dplyr", quietly = TRUE))
+  BiocManager::install("dplyr")
+if(!requireNamespace("ComplexHeatmap", quietly = TRUE))
+  BiocManager::install("ComplexHeatmap")
+if(!requireNamespace("circlize", quietly = TRUE))
+  BiocManager::install("circlize")
+if(!requireNamespace("gprofiler2", quietly = TRUE))
+  BiocManager::install("gprofiler2")
+if(!requireNamespace("dendsort", quietly = TRUE))
+  BiocManager::install("dendsort")
+```
+
+### Introduction
+
+#### Summary of the normalization and results done in the first assignment
+
+In the previous assignment we explored the data from GSE31729, which is associated with the paper "Lack of effect in desensitization with intravenous immunoglobulin and rituximab in highly-sensitized patients" by Akalin et al. This dataset contains gene expression profiles of blood samples gathered with Affymetrix Human Gene 1.0 ST Array of transplant patients, and it's trying to determine the effect of IVIG & rituximab on highly sensitized patients (the desired effect would be a desensitization, which would make it easier and safer for these patients to receive transplants).
+
+In the previous analysis we removed an outlier sample (number 39) and normalized the data. We discovered a total of 8004 unmapped probes, which were removed, giving us a total of 25293 probes.
+
+Before we start our DE analysis, we'll clean up the data a bit with some steps that weren't included in the last analysis: removing low-intensity probes, as well as unmapped and multiply-mapped probes.
+```{r}
+# Load in data from previous analysis
+es <- readRDS("annotated_expression_set.Rds")
+
+# Remove control and paired data, since we're only looking at before vs after
+filteredEs <- es[, es$group != "Control"]
+
+filteredEs <- filteredEs[, 17:34]
+#filteredEs <- filteredEs[, 1:16]
+
+# Get the median probe intensities 
+medians <- Biobase::rowMedians(Biobase::exprs(filteredEs))
+
+# We set the threshold at 5, slightly below the peak
+man_threshold <- 5
+hist_res <- hist(medians, 100, col = "cornsilk", freq = FALSE, 
+                 main = "Histogram of the median intensities",
+                 border = "antiquewhite4",
+                 xlab = "Median intensities")
+abline(v = man_threshold, col = "coral4", lwd = 2)
+
+# Get patient numbers in a separate column
+patientNumbers <- substr(rownames(Biobase::pData(filteredEs)), 1,3)
+patientNumbers <- trimws(patientNumbers, which = c("both"))
+Biobase::pData(filteredEs)[,4] <- patientNumbers
+
+# Get the Biobase::pData in its own variable
+filteredEsNp <- Biobase::pData(filteredEs)
+colnames(filteredEsNp)[4] <- "Patient"
+colnames(filteredEsNp)[3] <- "Treatment"
+
+# Filter out all transcripts that do not have intensities greater than the threshold in at least as many arrays as the smallest experimental group
+# See https://www.bioconductor.org/packages/devel/workflows/vignettes/maEndToEnd/inst/doc/MA-Workflow.html#10_filtering_based_on_intensity
+no_of_samples <- table(filteredEsNp$Treatment)
+samples_cutoff <- min(no_of_samples)
+idx_man_threshold <- apply(Biobase::exprs(filteredEs), 1,
+                           function(x){
+                          sum(x > man_threshold) >= samples_cutoff})
+                          table(idx_man_threshold)
+
+filteredEs <- subset(filteredEs, idx_man_threshold)
+
+# Remove NA (unmapped probes)
+filteredEs <- subset(filteredEs, !is.na(Biobase::fData(filteredEs)$SYMBOL))
+
+# Remove multiple mappings
+grouped <- dplyr::group_by(Biobase::fData(filteredEs), PROBEID)
+summarized <- dplyr::summarize(grouped, matches = dplyr::n_distinct(SYMBOL))
+filt <- dplyr::filter(summarized, matches > 1)
+```
+
+### Differential Expression analysis
+
+#### Differential expression analysis with your normalized expression set from Assignment #1. Model design definition.
+We'll look at our MDS plot again.
+```{r}
+mds <- cmdscale(dist(t(Biobase::exprs(es))),eig=TRUE)
+plot(mds$points,col=as.numeric(as.factor(Biobase::pData(es)$group)),pch=19,main="MDS")
+text(mds$points, labels=Biobase::sampleNames(es), cex=0.6, adj = 1.3)
+```
+
+We see some slight clustering of pre- and post-treatment samples. We'll also use the patient number as a factor in our model since we need to account for sample similarity in that regard. We also note samples 38 and 56 which seem to be relatively isolated.
+
+```{r}
+# Factorize the grouping variables
+groupsP = filteredEsNp$Patient 
+groupsT = filteredEsNp$Treatment
+fp = factor(groupsP,levels=unique(filteredEsNp$Patient))
+ft = factor(groupsT,levels=unique(filteredEsNp$Treatment))
+
+# Create design matrix
+pairedDesign = model.matrix(~ fp + ft)
+fit = limma::lmFit(filteredEs,pairedDesign)
+eb <- limma::eBayes(fit)
+pValues <- eb$p.value[, 10]
+
+# Get most DE genes
+topfit <- limma::topTable(eb, coef=ncol(pairedDesign), adjust.method = "BH", number = nrow(Biobase::exprs(filteredEs)))
+```
+#### How many genes were significantly differentially expressed
+We had a total of `r length(which(topfit$P.Value < 0.05))` significantly differentially expressed genes. 
+
+#### What thresholds were used and why
+The arbitrary but well-accepted threshold of 0.05 for P-value was used. Additionally, given that the paper used a threshold of log odds > 0, this was also used below (it was stored in the B column in the topTable output). 
+
+#### Which method was used and why 
+According to the limma documentation: 
+>The first four methods (Bonferroni, Holm, Hochberg, Hommel) are designed to give strong control of the family-wise error rate. There seems no reason to use the unmodified Bonferroni correction because it is dominated by Holm's method, which is also valid under arbitrary assumptions. Hochberg's and Hommel's methods are valid when the hypothesis tests are independent or when they are non-negatively associated (Sarkar, 1998; Sarkar and Chang, 1997). Hommel's method is more powerful than Hochberg's, but the difference is usually small and the Hochberg p-values are faster to compute. The "BH" (aka "fdr") and "BY" method of Benjamini, Hochberg, and Yekutieli control the false discovery rate, the expected proportion of false discoveries amongst the rejected hypotheses. The false discovery rate is a less stringent condition than the family-wise error rate, so these methods are more powerful than the others.
+
+The "BH" method was chosen as this seems to be generally the most appropriate for microarray data, as well as being less stringent.  
+
+
+#### How many genes passed correction
+A total of `r length(which(topfit$adj.P.Val < 0.05))` genes passed correction. It should be noted that in the paper the authors used log odds instead of P-values, which would give `r length(which(topfit$B > 0))` instead.
+
+#### Amount of differentially expressed genes using a Volcano plot
+```{r}
+# Get the volcano plot
+limma::volcanoplot(eb, coef = 10, style = "B-statistic", highlight = 31, names = eb$genes$SYMBOL, xlab = "Log2 Fold Change", ylab = NULL, pch=16, cex=0.35)
+```
+
+In the plot we can see genes that are mentioned in the paper (in Table 3 and the "Whole Gene Expression Profiles Before and After Treatment" section) such as MS4A1, HLA-DOA, ADAM28, CD79a, CD79b, etc.  
+
+#### Visualization of top hits using a heatmap
+```{r}
+# Get Top DE genes
+top <- topfit[topfit$B > 0, ]
+
+# Get heat map for the top 50 upregulated genes
+heatmap_matrix <- Biobase::exprs(filteredEs)[rownames(Biobase::exprs(filteredEs)) %in% top$PROBEID, ]
+heatmap_matrix <- t(scale(t(heatmap_matrix)))
+dend <- dendsort::dendsort(hclust(dist(as.matrix(heatmap_matrix))))
+
+if(min(heatmap_matrix) == 0){
+    heatmap_col = circlize::colorRamp2(c( 0, max(heatmap_matrix)), c( "white", "red"))
+} else {
+    heatmap_col = circlize::colorRamp2(c(min(heatmap_matrix), 0, max(heatmap_matrix)), c("blue", "white", "red"))
+}
+current_heatmap <- ComplexHeatmap::Heatmap(as.matrix(heatmap_matrix),
+                           show_row_dend = TRUE,
+                           show_column_dend = TRUE, 
+                           col=heatmap_col,
+                           show_column_names = TRUE, 
+                           show_row_names = FALSE,
+                           show_heatmap_legend = TRUE,
+                           cluster_rows = dend,
+                           name="Scaled Expr"
+)
+current_heatmap
+```
+
+Sample 38 after treatment seems to cluster closer to the ones before treatment, which is strange but it makes sense that its closest neighbour is sample 38 before treatment. We note that this sample was slightly isolated in our MDS plot, which may explain this. A more vexing case is that of sample 61 after treatment, which clusters with unrelated pre-treatment samples, as well as 40 before treatment which does the opposite. It's possible that this simply represents a lack of effect of the treatment on the patient.
+
+### Thresholded over-representation analysis
+
+#### Which method was used and why
+In the paper the authors use the limma::romer function, with the Molecular Signatures Database as well as PBT gene sets from the University of Alberta, but their link to these sets returns a 404, so in the interest of verifying their results rather than simply trying to replicate them, as well as due to familiarity with the tool, gProfiler was chosen.
+
+```{r}
+gpAll <- gprofiler2::gost(as.vector(top$ID), organism = "hsapiens", correction_method = "fdr", sources = c("REAC", "WP"), domain_scope = "known")
+gpAll$result
+```
+
+#### What annotation data was used, which version, and why
+Reactome and WikiPathways were used as data sources, to find which pathways were enriched in the differentially expressed genes. GO was attempted but the results were very vague and repetitive. 
+
+#### How many genesets were returned and their thresholds
+With a threshold of p < 0.05, we got `r dim(gpAll$result)[1]` genesets.
+
+#### Comparison of down- vs up-regulated genes
+```{r}
+# Get top upregulated and downregulated genes
+topdown = topfit[topfit$logFC < 0 & topfit$B > 0, ]
+topup = topfit[topfit$logFC > 0 & topfit$B > 0, ]
+
+gpUp <- gprofiler2::gost(as.vector(topup$ID), organism = "hsapiens", correction_method = "fdr", sources = c("REAC", "WP"), domain_scope = "known")
+gpDown <- gprofiler2::gost(as.vector(topdown$ID), organism = "hsapiens", correction_method = "fdr", sources = c("REAC", "WP"), domain_scope = "known")
+
+gpDown$result
+gpUp$result
+```
+
+We can see that the upregulated gene lists returns less results, with a few repetitive ones like Purine catabolism and Purine salvage, etc. This is in accordance with the paper which highlights significant downregulation of genes but not really upregulation. 
+For the downregulated genes, we can see several B-cell-related genes, as well as Immunoglobulin (FCGR activation, 	Classical antibody-mediated complement activation), which are both mentioned in the paper as significantly enriched in their analysis.
+
+#### References
+
+References:
+
+1. Martin Morgan (2018). BiocManager: Access the Bioconductor Project Package Repository. R package version 1.30.4. https://CRAN.R-project.org/package=BiocManager
+
+2. Orchestrating high-throughput genomic analysis with Bioconductor. W. Huber, V.J. Carey, R. Gentleman, ..., M. Morgan Nature Methods, 2015:12, 115.
+
+3. Ritchie, M.E., Phipson, B., Wu, D., Hu, Y., Law, C.W., Shi, W., and Smyth, G.K. (2015). limma powers differential expression analyses for RNA-sequencing and microarray studies. Nucleic Acids Research 43(7), e47.
+
+4. Hadley Wickham, Romain François, Lionel Henry and Kirill Müller (2020). dplyr: A Grammar of Data Manipulation. R package version 0.8.4. https://CRAN.R-project.org/package=dplyr
+
+5. Gu, Z. (2016) Complex heatmaps reveal patterns and correlations in multidimensional genomic data. Bioinformatics.
+
+6. Gu, Z. (2014) circlize implements and enhances circular visualization in R. Bioinformatics.
+
+7. Liis Kolberg and Uku Raudvere (2019). gprofiler2: Interface to the 'g:Profiler' Toolset. R package version 0.1.8. https://CRAN.R-project.org/package=gprofiler2
+
+8. Ryo Sakai (2015). dendsort: Modular Leaf Ordering Methods for Dendrogram Nodes. R package version 0.3.3. https://CRAN.R-project.org/package=dendsort
