@@ -39,7 +39,7 @@ In the previous analysis we removed an outlier sample (number 39) and normalized
 Before we start our DE analysis, we'll clean up the data a bit with some steps that weren't included in the last analysis: removing low-intensity probes, as well as unmapped and multiply-mapped probes.
 ```{r}
 # Load in data from previous analysis
-es <- readRDS("annotated_expression_set.Rds")
+es <- readRDS("Assignment_1_Data.Rds")
 
 # Remove control and paired data, since we're only looking at before vs after
 filteredEs <- es[, es$group != "Control"]
