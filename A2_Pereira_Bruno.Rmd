@@ -126,11 +126,11 @@ The arbitrary but well-accepted threshold of 0.05 for P-value was used. Addition
 According to the limma documentation: 
 >The first four methods (Bonferroni, Holm, Hochberg, Hommel) are designed to give strong control of the family-wise error rate. There seems no reason to use the unmodified Bonferroni correction because it is dominated by Holm's method, which is also valid under arbitrary assumptions. Hochberg's and Hommel's methods are valid when the hypothesis tests are independent or when they are non-negatively associated (Sarkar, 1998; Sarkar and Chang, 1997). Hommel's method is more powerful than Hochberg's, but the difference is usually small and the Hochberg p-values are faster to compute. The "BH" (aka "fdr") and "BY" method of Benjamini, Hochberg, and Yekutieli control the false discovery rate, the expected proportion of false discoveries amongst the rejected hypotheses. The false discovery rate is a less stringent condition than the family-wise error rate, so these methods are more powerful than the others.
 
-The "BH" method was chosen as this seems to be generally the most appropriate for microarray data, as well as being less stringent.  
+The "BH" method was chosen as this seems to be generally the most appropriate for microarray data, as well as being less stringent. Additionally, the BH method was used in the original paper.  
 
 
 #### How many genes passed correction
-A total of `r length(which(topfit$adj.P.Val < 0.05))` genes passed correction. It should be noted that in the paper the authors used log odds instead of P-values, which would give `r length(which(topfit$B > 0))` instead.
+A total of `r length(which(topfit$adj.P.Val < 0.05))` genes passed correction. It should be noted that in the paper the authors also used log odds values, which would give `r length(which(topfit$B > 0))` instead.
 
 #### Amount of differentially expressed genes using a Volcano plot
 ```{r}
