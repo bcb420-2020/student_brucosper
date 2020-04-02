@@ -1,6 +1,10 @@
 ---
 title: "Assignment 3"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 4 
 ---
 
 ## Introduction
