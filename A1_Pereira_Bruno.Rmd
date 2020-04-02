@@ -165,7 +165,7 @@ hist(affyNorm, xlim=c(0,16), main="Normalized Data Density", lwd=2)
 We still only have probeset IDs in our dataset, but fortunately there is an annotation package for this platform, which we can get.
 ```{r message=FALSE, warning=FALSE}
 es <- affycoretools::annotateEset(affyNorm, pd.hugene.1.0.st.v1)
-f <- fData(es)
+f <- Biobase::fData(es)
 ```
 
 

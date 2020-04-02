@@ -202,6 +202,7 @@ gpUp$result
 We can see that the upregulated gene lists returns less results, with a few repetitive ones like Purine catabolism and Purine salvage, etc. This is in accordance with the paper which highlights significant downregulation of genes but not really upregulation. 
 For the downregulated genes, we can see several B-cell-related genes, as well as Immunoglobulin (FCGR activation, 	Classical antibody-mediated complement activation), which are both mentioned in the paper as significantly enriched in their analysis.
 
+
 #### References
 
 References:
